@@ -1,0 +1,12 @@
+{
+  "name": "limpeza-pro",
+  "version": "1.0.0",
+  "description": "Sistema de Gestão de Limpeza - Tempo Real",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'Static build'"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}

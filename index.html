@@ -46,10 +46,9 @@
         .aba span { display: block; font-size: 10px; font-weight: normal; opacity: 0.8; }
         .aba.ativa { background: var(--primary); color: white; }
 
-        /* Estilo dos Cards com a Borda Lateral Corrigida */
         .card { 
             background: #fff; 
-            border-left: 6px solid #ccc; /* Cor padrão para pendente */
+            border-left: 6px solid #ccc;
             padding: 15px; 
             margin-bottom: 12px; 
             border-radius: 8px; 
@@ -58,10 +57,9 @@
             justify-content: space-between; 
             align-items: center; 
             border: 1px solid #eee; 
-            border-left-width: 6px; /* Garante que a borda lateral seja mais grossa */
+            border-left-width: 6px;
         }
         
-        /* Cores dinâmicas da borda baseadas no status */
         .card.andamento { border-left-color: var(--warning); background-color: #fffef0; }
         .card.concluido { border-left-color: var(--success); background-color: #f8fdf9; }
         
@@ -84,6 +82,19 @@
 
         #modal-foto { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center; cursor: pointer; }
         #modal-foto img { max-width: 90%; max-height: 90%; border-radius: 8px; border: 3px solid white; }
+
+        /* Indicador de conexão tempo real */
+        #status-conexao { 
+            position: fixed; bottom: 15px; right: 15px; 
+            background: #28a745; color: white; 
+            padding: 6px 12px; border-radius: 20px; 
+            font-size: 11px; font-weight: bold;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            transition: background 0.3s;
+            z-index: 100;
+        }
+        #status-conexao.desconectado { background: #dc3545; }
+        #status-conexao.reconectando { background: #ffc107; color: #333; }
     </style>
 </head>
 <body>
@@ -91,6 +102,8 @@
 <div id="modal-foto" onclick="this.style.display='none'">
     <img id="img-zoom" src="" alt="Foto ampliada">
 </div>
+
+<div id="status-conexao">🟢 Tempo Real</div>
 
 <div class="container">
     <div class="header-info">
@@ -107,7 +120,7 @@
             <option value="Fabiano">Fabiano</option><option value="Irlana">Irlana</option>
             <option value="Jailma">Jailma</option><option value="Marciana">Marciana</option>
         </select>
-        <input type="password" id="senha" placeholder="Digite sua senha">
+        <input type="password" id="senha" placeholder="Digite sua senha" onkeydown="if(event.key==='Enter') fazerLogin()">
         <button class="btn-main" onclick="fazerLogin()">ENTRAR NO SISTEMA</button>
     </div>
 
@@ -126,7 +139,7 @@
                 </select>
             </div>
             <p id="preview-data" style="font-size: 11px; text-align: center; color: var(--primary); margin: 5px 0 0 0;"></p>
-            <input type="text" id="adm-tarefa" placeholder="O que deve ser feito?">
+            <input type="text" id="adm-tarefa" placeholder="O que deve ser feito?" onkeydown="if(event.key==='Enter') adicionarTarefa()">
             <select id="adm-func">
                 <option>Ana</option><option>Beatriz</option><option>Claudio</option>
                 <option>Emilia</option><option>Fabiano</option><option>Irlana</option>
@@ -167,171 +180,422 @@
             <button class="btn-warning" onclick="resetarSenhas()">🔑 Resetar Senhas</button>
             <button class="btn-danger" onclick="limparBanco()">🔄 Resetar Tudo</button>
         </div>
-        <button style="background:#6c757d; margin-top: 15px;" onclick="location.reload()">SAIR</button>
+        <button style="background:#6c757d; margin-top: 15px;" onclick="sair()">SAIR</button>
     </div>
 
     <div id="painel-func" class="secao">
         <h2 id="boas-vindas" style="margin-bottom: 20px;"></h2>
         <div class="aba-container" id="abas-dias"></div>
         <div id="minhas-tarefas"></div>
-        <button style="background:#6c757d; margin-top: 20px;" onclick="location.reload()">SAIR</button>
+        <button style="background:#6c757d; margin-top: 20px;" onclick="sair()">SAIR</button>
     </div>
 </div>
 
-<script type="module">
-    // 1. Importação dos módulos do Firebase
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getFirestore, collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-    import { getStorage, ref, uploadString, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
-
-    // 2. CONFIGURAÇÃO (COLE SEUS DADOS AQUI)
-    const firebaseConfig = {
-        apiKey: "AIzaSyAebvWLQMFakShaZINRP7mOvziZ1dZjuzg",
-        authDomain: "limpezapro.firebaseapp.com",
-        projectId: "limpezapro",
-        storageBucket: "limpezapro.firebasestorage.app",
-        messagingSenderId: "1077845410885",
-        appId: "1:1077845410885:web:80ec3a034f586b3bfa0f2c",
-        measurementId: "G-KBQP2VHQW4"
-    };
-
-    // Inicialização
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-    const storage = getStorage(app);
-    const tarefasRef = collection(db, "tarefas");
+<script>
+    // =============================================
+    // CONFIGURAÇÃO — SEM FIREBASE, SEM SUPABASE
+    // Backend próprio via API Vercel + Upstash Redis
+    // =============================================
 
     let tarefasLocais = [];
     let userAtivo = "";
     let diaAtivoFunc = "Segunda";
+    let sseConexao = null;
+    let pollingInterval = null;
     const diasSemana = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 
-    // --- ESCUTA O BACKEND EM TEMPO REAL ---
-    onSnapshot(query(tarefasRef, orderBy("timestamp", "desc")), (snapshot) => {
-        tarefasLocais = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        if (userAtivo === 'admin') renderAdmin();
-        else if (userAtivo) renderFunc();
-    });
+    // ---- RELÓGIO ----
+    function atualizarRelogio() {
+        const agora = new Date();
+        document.getElementById('txt-hora').textContent = agora.toLocaleTimeString('pt-BR');
+        document.getElementById('txt-data').textContent = agora.toLocaleDateString('pt-BR', {
+            weekday: 'long', day: '2-digit', month: 'long', year: 'numeric'
+        });
+    }
+    setInterval(atualizarRelogio, 1000);
+    atualizarRelogio();
 
-    // --- FUNÇÕES DE LOGIN E SESSÃO ---
-    window.fazerLogin = () => {
+    // ---- API: FETCH HELPER ----
+    async function api(endpoint, method = 'GET', body = null) {
+        const opts = {
+            method,
+            headers: { 'Content-Type': 'application/json' }
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(endpoint, opts);
+        if (!res.ok) throw new Error(`API ${method} ${endpoint} falhou: ${res.status}`);
+        return res.json();
+    }
+
+    // ---- CARREGAR TAREFAS DO BACKEND ----
+    async function carregarTarefas() {
+        try {
+            const data = await api('/api/tarefas');
+            tarefasLocais = data.tarefas || [];
+            if (userAtivo === 'admin') renderAdmin();
+            else if (userAtivo) renderFunc();
+        } catch (e) {
+            console.error('Erro ao carregar tarefas:', e);
+        }
+    }
+
+    // ---- TEMPO REAL: SSE (Server-Sent Events) ----
+    function conectarSSE() {
+        if (sseConexao) sseConexao.close();
+
+        const statusEl = document.getElementById('status-conexao');
+        statusEl.className = 'reconectando';
+        statusEl.textContent = '🟡 Conectando...';
+
+        try {
+            sseConexao = new EventSource('/api/stream');
+
+            sseConexao.onopen = () => {
+                statusEl.className = '';
+                statusEl.textContent = '🟢 Tempo Real';
+                // Para o polling quando SSE está ativo
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+            };
+
+            sseConexao.onmessage = (e) => {
+                if (e.data === 'update') {
+                    carregarTarefas();
+                }
+            };
+
+            sseConexao.onerror = () => {
+                statusEl.className = 'desconectado';
+                statusEl.textContent = '🔴 Reconectando...';
+                sseConexao.close();
+                // Fallback para polling quando SSE falha
+                iniciarPolling();
+                // Tenta reconectar SSE em 5s
+                setTimeout(conectarSSE, 5000);
+            };
+        } catch (e) {
+            iniciarPolling();
+        }
+    }
+
+    // ---- FALLBACK: POLLING A CADA 3s ----
+    function iniciarPolling() {
+        if (pollingInterval) return; // Já está rodando
+        pollingInterval = setInterval(carregarTarefas, 3000);
+        document.getElementById('status-conexao').textContent = '🔄 Sincronizando...';
+    }
+
+    // ---- LOGIN ----
+    function fazerLogin() {
         const user = document.getElementById('select-user').value;
         const pass = document.getElementById('senha').value;
-        if(user === 'admin' && pass === '813147') abrirSessao('admin');
-        else if(pass) abrirSessao(user); // Simplificado para teste
-        else alert("Digite a senha!");
-    };
+
+        // Senhas: admin=813147, funcionários=senha padrão '1234' ou a própria
+        const senhas = {
+            admin: '813147',
+            Ana: '1234', Beatriz: '1234', Claudio: '1234',
+            Emilia: '1234', Fabiano: '1234', Irlana: '1234',
+            Jailma: '1234', Marciana: '1234'
+        };
+
+        if (!pass) { alert('Digite a senha!'); return; }
+        if (senhas[user] && pass !== senhas[user]) { alert('Senha incorreta!'); return; }
+
+        abrirSessao(user);
+    }
 
     function abrirSessao(user) {
         userAtivo = user;
         document.getElementById('tela-login').classList.remove('ativa');
         document.getElementById(user === 'admin' ? 'painel-admin' : 'painel-func').classList.add('ativa');
-        if(user !== 'admin') {
+
+        if (user !== 'admin') {
             document.getElementById('boas-vindas').innerText = `Olá, ${user}`;
-            mudarDiaFunc("Segunda");
+            // Define o dia atual automaticamente
+            const diasMap = { 0: 'Domingo', 1: 'Segunda', 2: 'Terça', 3: 'Quarta', 4: 'Quinta', 5: 'Sexta', 6: 'Sábado' };
+            diaAtivoFunc = diasMap[new Date().getDay()] || 'Segunda';
+        }
+
+        carregarTarefas();
+        conectarSSE();
+    }
+
+    function sair() {
+        if (sseConexao) sseConexao.close();
+        if (pollingInterval) clearInterval(pollingInterval);
+        userAtivo = '';
+        location.reload();
+    }
+
+    // ---- ADMIN: ADICIONAR TAREFA ----
+    async function adicionarTarefa() {
+        const t = document.getElementById('adm-tarefa').value.trim();
+        if (!t) { alert('Descreva a tarefa'); return; }
+
+        const btn = document.querySelector('.btn-success');
+        btn.textContent = 'Salvando...';
+        btn.disabled = true;
+
+        try {
+            await api('/api/tarefas', 'POST', {
+                andar: document.getElementById('adm-andar').value,
+                dia: document.getElementById('adm-dia').value,
+                usuario: document.getElementById('adm-func').value,
+                tarefa: t
+            });
+            document.getElementById('adm-tarefa').value = '';
+            await carregarTarefas();
+        } catch (e) {
+            alert('Erro ao adicionar tarefa. Tente novamente.');
+        } finally {
+            btn.textContent = 'ADICIONAR NA ESCALA';
+            btn.disabled = false;
         }
     }
 
-    // --- BACKEND: ADICIONAR TAREFA ---
-    window.adicionarTarefa = async () => {
-        const t = document.getElementById('adm-tarefa').value;
-        if(!t) return alert("Descreva a tarefa");
-        
-        await addDoc(tarefasRef, {
-            andar: document.getElementById('adm-andar').value,
-            dia: document.getElementById('adm-dia').value,
-            usuario: document.getElementById('adm-func').value,
-            tarefa: t,
-            status: "Pendente",
-            dataCriacao: new Date().toLocaleDateString('pt-BR'),
-            timestamp: Date.now()
-        });
-        document.getElementById('adm-tarefa').value = "";
-    };
+    // ---- FUNCIONÁRIO: CONTROLAR STATUS ----
+    async function controlarTarefa(id) {
+        const t = tarefasLocais.find(x => x.id === id);
+        if (!t) return;
 
-    // --- BACKEND: SALVAR FOTO (STORAGE) ---
-    window.tirarFoto = async (id) => {
+        const agora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        let updates = {};
+
+        if (t.status === 'Pendente') {
+            updates = { status: 'Em andamento', inicioMs: Date.now(), horarioInicio: agora };
+        } else if (t.status === 'Em andamento') {
+            updates = { status: 'Concluído', horarioFim: agora };
+        } else {
+            return; // Já concluído
+        }
+
+        try {
+            await api('/api/tarefas', 'PUT', { id, ...updates });
+            await carregarTarefas();
+        } catch (e) {
+            alert('Erro ao atualizar tarefa.');
+        }
+    }
+
+    // ---- FUNCIONÁRIO: FOTO ----
+    function tirarFoto(id) {
         const input = document.createElement('input');
-        input.type = 'file'; input.accept = 'image/*'; input.capture = 'environment';
-        
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.capture = 'environment';
+
         input.onchange = async (e) => {
             const file = e.target.files[0];
+            if (!file) return;
+
+            // Comprime a imagem antes de enviar
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
             const reader = new FileReader();
+
             reader.readAsDataURL(file);
-            reader.onload = async (event) => {
-                const base64 = event.target.result;
-                const storageRef = ref(storage, `fotos/${id}.jpg`);
-                
-                // Upload para o Storage (O "HD" do backend)
-                await uploadString(storageRef, base64, 'data_url');
-                const urlTotal = await getDownloadURL(storageRef);
-                
-                // Atualiza o link da foto no banco de dados
-                await updateDoc(doc(db, "tarefas", id), { foto: urlTotal });
+            reader.onload = (ev) => {
+                img.src = ev.target.result;
+                img.onload = async () => {
+                    // Redimensiona para max 800px
+                    const maxW = 800;
+                    const ratio = Math.min(maxW / img.width, maxW / img.height, 1);
+                    canvas.width = img.width * ratio;
+                    canvas.height = img.height * ratio;
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    const base64 = canvas.toDataURL('image/jpeg', 0.7);
+
+                    try {
+                        const result = await api('/api/foto', 'POST', { id, foto: base64 });
+                        await carregarTarefas();
+                    } catch (e) {
+                        alert('Erro ao enviar foto.');
+                    }
+                };
             };
         };
         input.click();
-    };
+    }
 
-    // --- BACKEND: CONTROLAR STATUS ---
-    window.controlarTarefa = async (id) => {
-        const t = tarefasLocais.find(x => x.id === id);
-        const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-        const refDoc = doc(db, "tarefas", id);
-
-        if(t.status === "Pendente") {
-            await updateDoc(refDoc, { status: "Em andamento", inicioMs: Date.now(), horarioInicio: agora });
-        } else if(t.status === "Em andamento") {
-            await updateDoc(refDoc, { status: "Concluído", horarioFim: agora });
+    // ---- ADMIN: EXCLUIR TAREFA ----
+    async function excluirTarefa(id) {
+        if (!confirm('Excluir esta tarefa?')) return;
+        try {
+            await api('/api/tarefas', 'DELETE', { id });
+            await carregarTarefas();
+        } catch (e) {
+            alert('Erro ao excluir tarefa.');
         }
-    };
+    }
 
-    window.excluirTarefa = async (id) => {
-        if(confirm("Excluir do servidor?")) await deleteDoc(doc(db, "tarefas", id));
-    };
-
-    // --- INTERFACE (RENDERIZAÇÃO) ---
+    // ---- RENDERIZAÇÃO: ADMIN ----
     function renderAdmin() {
+        const filtroFunc = document.getElementById('filtro-func')?.value || 'todos';
+        const filtroDia = document.getElementById('filtro-dia')?.value || 'todos';
+        const filtroStatus = document.getElementById('filtro-status')?.value || 'todos';
+
+        let filtradas = tarefasLocais;
+        if (filtroFunc !== 'todos') filtradas = filtradas.filter(t => t.usuario === filtroFunc);
+        if (filtroDia !== 'todos') filtradas = filtradas.filter(t => t.dia === filtroDia);
+        if (filtroStatus !== 'todos') filtradas = filtradas.filter(t => t.status === filtroStatus);
+
         const lista = document.getElementById('lista-geral');
-        lista.innerHTML = tarefasLocais.map(t => `
+        if (!lista) return;
+
+        if (filtradas.length === 0) {
+            lista.innerHTML = '<p style="text-align:center; color:#999; padding:20px;">Nenhuma tarefa encontrada</p>';
+            return;
+        }
+
+        lista.innerHTML = filtradas.map(t => `
             <div class="card ${t.status === 'Concluído' ? 'concluido' : (t.status === 'Em andamento' ? 'andamento' : '')}">
                 <div class="info-tarefa">
                     <small><strong>${t.dia}</strong> | ${t.usuario}</small>
                     <strong>${t.andar}: ${t.tarefa}</strong>
-                    <div class="badge-status">${t.status} ${t.foto ? ' | 📷 com foto' : ''}</div>
-                    ${t.foto ? `<img src="${t.foto}" class="img-anexo" onclick="window.verFoto('${t.foto}')">` : ''}
+                    <div class="badge-status">${t.status}${t.foto ? ' | 📷 com foto' : ''}</div>
+                    ${t.horarioInicio ? `<small>▶ ${t.horarioInicio}${t.horarioFim ? ` → ✓ ${t.horarioFim}` : ''}</small>` : ''}
+                    ${t.foto ? `<img src="${t.foto}" class="img-anexo" onclick="verFoto('${t.foto}')">` : ''}
                 </div>
                 <button onclick="excluirTarefa('${t.id}')" style="width:auto; background:none; color:#999; font-size:18px">🗑️</button>
             </div>
         `).join('');
     }
 
-    window.mudarDiaFunc = (d) => { diaAtivoFunc = d; renderFunc(); };
+    // ---- RENDERIZAÇÃO: FUNCIONÁRIO ----
+    function mudarDiaFunc(d) {
+        diaAtivoFunc = d;
+        renderFunc();
+    }
 
     function renderFunc() {
         const abas = document.getElementById('abas-dias');
-        abas.innerHTML = diasSemana.map(d => `<div class="aba ${d === diaAtivoFunc ? 'ativa' : ''}" onclick="mudarDiaFunc('${d}')">${d}</div>`).join('');
+        if (!abas) return;
+
+        abas.innerHTML = diasSemana.map(d => `
+            <div class="aba ${d === diaAtivoFunc ? 'ativa' : ''}" onclick="mudarDiaFunc('${d}')">${d}</div>
+        `).join('');
+
         const filtradas = tarefasLocais.filter(t => t.usuario === userAtivo && t.dia === diaAtivoFunc);
-        document.getElementById('minhas-tarefas').innerHTML = filtradas.map(t => `
+        const container = document.getElementById('minhas-tarefas');
+
+        if (filtradas.length === 0) {
+            container.innerHTML = '<p style="text-align:center; color:#999; padding:20px;">Sem tarefas para este dia 🎉</p>';
+            return;
+        }
+
+        container.innerHTML = filtradas.map(t => `
             <div class="card ${t.status === 'Concluído' ? 'concluido' : (t.status === 'Em andamento' ? 'andamento' : '')}">
                 <div style="display:flex; flex-direction:column; gap:5px;">
                     <button class="btn-foto" onclick="tirarFoto('${t.id}')">📷</button>
                 </div>
                 <div class="info-tarefa">
-                    <strong>${t.andar}</strong> <small>${t.tarefa}</small>
-                    ${t.foto ? `<img src="${t.foto}" class="img-anexo" onclick="window.verFoto('${t.foto}')">` : ''}
+                    <strong>${t.andar}</strong>
+                    <small>${t.tarefa}</small>
+                    <div class="badge-status">${t.status}</div>
+                    ${t.horarioInicio ? `<small>▶ ${t.horarioInicio}${t.horarioFim ? ` → ✓ ${t.horarioFim}` : ''}</small>` : ''}
+                    ${t.foto ? `<img src="${t.foto}" class="img-anexo" onclick="verFoto('${t.foto}')">` : ''}
                 </div>
-                <button class="${t.status === 'Em andamento' ? 'btn-success' : 'btn-main'}" style="width:80px" onclick="controlarTarefa('${t.id}')">
-                    ${t.status === 'Em andamento' ? 'FIM' : (t.status === 'Concluído' ? '✅' : 'INÍCIO')}
+                <button 
+                    class="${t.status === 'Concluído' ? '' : (t.status === 'Em andamento' ? 'btn-success' : 'btn-main')}" 
+                    style="width:80px; ${t.status === 'Concluído' ? 'background:#28a745' : ''}"
+                    onclick="controlarTarefa('${t.id}')"
+                    ${t.status === 'Concluído' ? 'disabled' : ''}
+                >
+                    ${t.status === 'Concluído' ? '✅' : (t.status === 'Em andamento' ? 'FIM' : 'INÍCIO')}
                 </button>
             </div>
         `).join('');
     }
 
-    window.verFoto = (src) => {
+    // ---- VER FOTO ----
+    function verFoto(src) {
         document.getElementById('img-zoom').src = src;
         document.getElementById('modal-foto').style.display = 'flex';
-    };
+    }
+
+    // ---- EXPORTAR CSV ----
+    function exportarCSV() {
+        if (tarefasLocais.length === 0) { alert('Sem dados para exportar.'); return; }
+
+        const header = 'Dia,Funcionário,Andar,Tarefa,Status,Início,Fim,Data Criação\n';
+        const rows = tarefasLocais.map(t =>
+            `"${t.dia}","${t.usuario}","${t.andar}","${t.tarefa}","${t.status}","${t.horarioInicio || ''}","${t.horarioFim || ''}","${t.dataCriacao}"`
+        ).join('\n');
+
+        const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tarefas_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.csv`;
+        a.click();
+    }
+
+    // ---- NOVA SEMANA (reseta status, mantém estrutura) ----
+    async function novaSemana() {
+        if (!confirm('Resetar status de TODAS as tarefas para "Pendente"? (mantém a estrutura)')) return;
+
+        try {
+            const promises = tarefasLocais.map(t =>
+                api('/api/tarefas', 'PUT', {
+                    id: t.id,
+                    status: 'Pendente',
+                    horarioInicio: null,
+                    horarioFim: null,
+                    inicioMs: null,
+                    foto: null
+                })
+            );
+            await Promise.all(promises);
+            await carregarTarefas();
+            alert('Nova semana iniciada! Todos os status foram resetados.');
+        } catch (e) {
+            alert('Erro ao resetar semana.');
+        }
+    }
+
+    // ---- RESETAR SENHAS ----
+    function resetarSenhas() {
+        alert('Senhas padrão dos funcionários: 1234\nSenha do administrador: 813147\n\nPara alterar senhas, edite o código-fonte no arquivo index.html, seção "fazerLogin".');
+    }
+
+    // ---- LIMPAR BANCO ----
+    async function limparBanco() {
+        if (!confirm('⚠️ ATENÇÃO: Isso vai EXCLUIR TODAS as tarefas permanentemente!\n\nTem certeza?')) return;
+        if (!confirm('Última chance! Realmente deseja apagar tudo?')) return;
+
+        try {
+            const promises = tarefasLocais.map(t => api('/api/tarefas', 'DELETE', { id: t.id }));
+            await Promise.all(promises);
+            await carregarTarefas();
+            alert('Banco de dados resetado com sucesso.');
+        } catch (e) {
+            alert('Erro ao limpar banco.');
+        }
+    }
+
+    // ---- PREVIEW DATA ----
+    function atualizarPreviewData() {
+        const diasMap = { 'Segunda': 1, 'Terça': 2, 'Quarta': 3, 'Quinta': 4, 'Sexta': 5, 'Sábado': 6, 'Domingo': 0 };
+        const dia = document.getElementById('adm-dia')?.value;
+        if (!dia) return;
+
+        const hoje = new Date();
+        const hojeNum = hoje.getDay();
+        const alvoNum = diasMap[dia];
+        let diff = alvoNum - hojeNum;
+        if (diff < 0) diff += 7;
+
+        const dataAlvo = new Date(hoje);
+        dataAlvo.setDate(hoje.getDate() + diff);
+
+        document.getElementById('preview-data').textContent =
+            diff === 0 ? '📅 Hoje' : `📅 ${dataAlvo.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })}`;
+    }
+    // Chama ao carregar para mostrar preview inicial
+    setTimeout(atualizarPreviewData, 100);
 </script>
 </body>
 </html>
