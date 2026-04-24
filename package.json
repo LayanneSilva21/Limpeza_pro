@@ -6,9 +6,10 @@
     "dev": "vercel dev",
     "build": "echo 'Static build'"
   },
-  "node": "24.x"
+  "engines": {
+    "node": "20.x"
   },
   "dependencies": {
     
   }
-
+}
